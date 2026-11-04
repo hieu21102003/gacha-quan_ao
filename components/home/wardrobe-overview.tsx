@@ -1,14 +1,18 @@
+'use client'
+
 import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
-import { wardrobeStats } from '@/lib/wardrobe-data'
-
-const stats = [
-  { label: 'Items', value: wardrobeStats.totalItems.toString() },
-  { label: 'Outfits', value: wardrobeStats.savedOutfits.toString() },
-  { label: 'Most worn', value: wardrobeStats.mostWornCategory },
-]
+import { useWardrobe } from '@/components/providers/wardrobe-provider'
 
 export function WardrobeOverview() {
+  const { items } = useWardrobe()
+  const recentlyWornCount = items.filter((item) => item.status === 'Worn recently').length
+  const stats = [
+    { label: 'Items', value: items.length.toString() },
+    { label: 'Outfits', value: '—' },
+    { label: 'Recently worn', value: recentlyWornCount.toString() },
+  ]
+
   return (
     <section aria-labelledby="wardrobe-overview-heading" className="rounded-2xl border border-border p-5">
       <div className="flex items-center justify-between">

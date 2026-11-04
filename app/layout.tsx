@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Manrope } from 'next/font/google'
 import { AppShell } from '@/components/layout/app-shell'
+import { WardrobeProvider } from '@/components/providers/wardrobe-provider'
 import './globals.css'
 
 const manrope = Manrope({
@@ -44,7 +45,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${manrope.variable} bg-background`}>
       <body className="font-sans antialiased">
-        <AppShell>{children}</AppShell>
+        <WardrobeProvider>
+          <AppShell>{children}</AppShell>
+        </WardrobeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
