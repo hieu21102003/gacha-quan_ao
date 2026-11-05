@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#8b927b">
+    <title>Offline · Virtual Wardrobe</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+        color: #171717;
+        background: #f7f7f5;
+      }
+      * { box-sizing: border-box; }
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        padding: 24px;
+      }
+      main {
+        width: min(100%, 440px);
+        padding: 40px 28px;
+        text-align: center;
+        background: #fff;
+        border: 1px solid #eeeeec;
+        border-radius: 28px;
+      }
+      .mark {
+        display: grid;
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 20px;
+        place-items: center;
+        color: #5f6651;
+        background: #eef0ea;
+        border-radius: 50%;
+        font-size: 24px;
+      }
+      h1 { margin: 0; font-size: 24px; letter-spacing: -0.04em; }
+      p { margin: 12px 0 0; color: #666; font-size: 14px; line-height: 1.65; }
+      a {
+        display: inline-flex;
+        min-height: 44px;
+        align-items: center;
+        margin-top: 24px;
+        padding: 0 20px;
+        color: #fff;
+        background: #171717;
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true">VW</div>
+      <h1>You’re offline</h1>
+      <p>This page couldn’t be loaded without a connection. Your saved wardrobe data remains stored on this device. Reconnect and try again.</p>
+      <a href="/">Try again</a>
+    </main>
+  </body>
+</html>

@@ -2,15 +2,18 @@
 
 import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
+import { useOutfits } from '@/components/providers/outfit-provider'
 import { useWardrobe } from '@/components/providers/wardrobe-provider'
+import { useWearLogs } from '@/components/providers/wear-log-provider'
 
 export function WardrobeOverview() {
   const { items } = useWardrobe()
-  const recentlyWornCount = items.filter((item) => item.status === 'Worn recently').length
+  const { outfits } = useOutfits()
+  const { logs } = useWearLogs()
   const stats = [
     { label: 'Items', value: items.length.toString() },
-    { label: 'Outfits', value: '—' },
-    { label: 'Recently worn', value: recentlyWornCount.toString() },
+    { label: 'Outfits', value: outfits.length.toString() },
+    { label: 'Confirmed wears', value: logs.length.toString() },
   ]
 
   return (

@@ -1,6 +1,7 @@
 import {
   CalendarDays,
   House,
+  Layers,
   PlusCircle,
   Shirt,
   UserRound,
@@ -17,6 +18,7 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { href: '/', label: 'Home', icon: House },
   { href: '/closet', label: 'Closet', icon: Shirt },
+  { href: '/outfits', label: 'Outfits', icon: Layers },
   { href: '/create', label: 'Create', icon: PlusCircle, emphasized: true },
   { href: '/calendar', label: 'Calendar', icon: CalendarDays },
   { href: '/profile', label: 'Profile', icon: UserRound },

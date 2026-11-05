@@ -21,9 +21,9 @@ interface ClothingDetailSheetProps {
   item: ClothingItem | null
   open: boolean
   onOpenChange: (open: boolean) => void
-  onToggleFavorite: (id: string) => void
+  onToggleFavorite: (id: string) => Promise<void>
   onEdit: (item: ClothingItem) => void
-  onDelete: (id: string) => void
+  onDelete: (id: string) => Promise<void>
 }
 
 export function ClothingDetailSheet({
@@ -35,7 +35,26 @@ export function ClothingDetailSheet({
   onDelete,
 }: ClothingDetailSheetProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
   const { src, error } = useClothingImage(item?.image)
+
+  const handleDelete = async () => {
+    if (!item) return
+    setIsDeleting(true)
+    setActionError(null)
+    try {
+      await onDelete(item.id)
+      setConfirmingDelete(false)
+      onOpenChange(false)
+    } catch (deleteError) {
+      setActionError(
+        deleteError instanceof Error ? deleteError.message : 'Unable to delete this clothing item.',
+      )
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   const handleOpenChange = (next: boolean) => {
     if (!next) setConfirmingDelete(false)
@@ -125,6 +144,9 @@ export function ClothingDetailSheet({
                 <p className="mt-1 text-sm text-muted-foreground">
                   {item.name} will be removed from your closet for this session.
                 </p>
+                {actionError && (
+                  <p role="alert" className="mt-2 text-xs text-destructive">{actionError}</p>
+                )}
                 <div className="mt-4 flex gap-2">
                   <Button
                     variant="outline"
@@ -136,13 +158,10 @@ export function ClothingDetailSheet({
                   <Button
                     variant="destructive"
                     className="h-11 flex-1 rounded-full"
-                    onClick={() => {
-                      onDelete(item.id)
-                      setConfirmingDelete(false)
-                      onOpenChange(false)
-                    }}
+                    disabled={isDeleting}
+                    onClick={() => void handleDelete()}
                   >
-                    Delete
+                    {isDeleting ? 'Deleting…' : 'Delete'}
                   </Button>
                 </div>
               </div>
@@ -159,7 +178,7 @@ export function ClothingDetailSheet({
                   <Button
                     variant="outline"
                     className="h-12 rounded-full"
-                    onClick={() => onToggleFavorite(item.id)}
+                    onClick={() => void onToggleFavorite(item.id)}
                   >
                     <Heart
                       className={cn(item.favorite && 'fill-olive text-olive')}
