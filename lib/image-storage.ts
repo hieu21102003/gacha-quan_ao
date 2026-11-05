@@ -80,7 +80,23 @@ export function subscribeToStorageChanges(store: StoreName, listener: () => void
 }
 
 function sameSeedRecord(record: Record<string, unknown>, seed: ClothingItem) {
+  const expectedFields = [
+    'id',
+    'name',
+    'category',
+    'image',
+    'imageAlt',
+    'color',
+    'brand',
+    'seasons',
+    'styles',
+    'price',
+    'status',
+    'favorite',
+  ]
   return (
+    Object.keys(record).length === expectedFields.length &&
+    expectedFields.every((field) => field in record) &&
     record.id === seed.id &&
     record.name === seed.name &&
     record.category === seed.category &&
