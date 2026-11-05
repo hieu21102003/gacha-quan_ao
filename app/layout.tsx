@@ -2,7 +2,11 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Manrope } from 'next/font/google'
 import { AppShell } from '@/components/layout/app-shell'
+import { CalendarProvider } from '@/components/providers/calendar-provider'
+import { OutfitProvider } from '@/components/providers/outfit-provider'
 import { WardrobeProvider } from '@/components/providers/wardrobe-provider'
+import { WearLogProvider } from '@/components/providers/wear-log-provider'
+import { PwaRegistration } from '@/components/pwa/pwa-registration'
 import './globals.css'
 
 const manrope = Manrope({
@@ -16,8 +20,7 @@ export const metadata: Metadata = {
     default: 'Virtual Wardrobe',
     template: '%s · Virtual Wardrobe',
   },
-  description:
-    'Your personal digital closet. Organize your clothes, plan outfits, and find something great to wear every day.',
+  description: 'Your personal digital wardrobe and outfit planner.',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -31,7 +34,7 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   colorScheme: 'light',
-  themeColor: '#FFFFFF',
+  themeColor: '#8b927b',
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
@@ -45,8 +48,15 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${manrope.variable} bg-background`}>
       <body className="font-sans antialiased">
+        <PwaRegistration />
         <WardrobeProvider>
-          <AppShell>{children}</AppShell>
+          <OutfitProvider>
+            <CalendarProvider>
+              <WearLogProvider>
+                <AppShell>{children}</AppShell>
+              </WearLogProvider>
+            </CalendarProvider>
+          </OutfitProvider>
         </WardrobeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

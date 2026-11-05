@@ -2,13 +2,23 @@ import {
   clothingCategories,
   wearStatuses,
   type ClothingItem,
+  type Outfit,
 } from '@/lib/wardrobe-data'
+import { isCalendarDate, type CalendarEntry } from '@/lib/calendar-data'
+import {
+  DuplicateCalendarWearError,
+  isWearLog,
+  type WearLog,
+} from '@/lib/wear-log-data'
 
 const databaseName = 'virtual-wardrobe'
-const databaseVersion = 2
+const databaseVersion = 5
 const imageStoreName = 'images'
 const wardrobeStoreName = 'wardrobe'
 const metadataStoreName = 'metadata'
+const outfitStoreName = 'outfits'
+const calendarStoreName = 'calendar'
+const wearLogStoreName = 'wearLogs'
 const wardrobeInitializedKey = 'wardrobe-initialized'
 const imageReferencePrefix = 'idb-image:'
 
@@ -46,6 +56,15 @@ function openDatabase(): Promise<IDBDatabase> {
       }
       if (!database.objectStoreNames.contains(metadataStoreName)) {
         database.createObjectStore(metadataStoreName, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(outfitStoreName)) {
+        database.createObjectStore(outfitStoreName, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(calendarStoreName)) {
+        database.createObjectStore(calendarStoreName, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(wearLogStoreName)) {
+        database.createObjectStore(wearLogStoreName, { keyPath: 'id' })
       }
     }
 
@@ -173,6 +192,37 @@ function isClothingItem(value: unknown): value is ClothingItem {
   )
 }
 
+function isOutfit(value: unknown): value is Outfit {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.id === 'string' &&
+    typeof record.name === 'string' &&
+    typeof record.description === 'string' &&
+    Array.isArray(record.itemIds) &&
+    record.itemIds.every((itemId: unknown) => typeof itemId === 'string') &&
+    typeof record.createdAt === 'string' &&
+    typeof record.updatedAt === 'string' &&
+    typeof record.favorite === 'boolean'
+  )
+}
+
+function isCalendarEntry(value: unknown): value is CalendarEntry {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.id === 'string' &&
+    record.id.length > 0 &&
+    typeof record.outfitId === 'string' &&
+    record.outfitId.length > 0 &&
+    typeof record.date === 'string' &&
+    isCalendarDate(record.date) &&
+    typeof record.note === 'string' &&
+    typeof record.createdAt === 'string' &&
+    typeof record.updatedAt === 'string'
+  )
+}
+
 export function initializeWardrobe(seedItems: ClothingItem[]): Promise<ClothingItem[]> {
   return runTransaction(
     [wardrobeStoreName, metadataStoreName],
@@ -253,6 +303,146 @@ export function persistWardrobe(items: ClothingItem[]): Promise<void> {
       complete(undefined)
     },
   )
+}
+
+export async function getOutfits(): Promise<Outfit[]> {
+  const result: unknown = await runRequest(outfitStoreName, 'readonly', (store) => store.getAll())
+  if (!Array.isArray(result) || !result.every(isOutfit)) {
+    throw new Error('Saved outfit data is invalid and was not changed.')
+  }
+  return result
+}
+
+export function persistOutfits(outfits: Outfit[]): Promise<void> {
+  if (!outfits.every(isOutfit)) {
+    return Promise.reject(new Error('Outfit data is invalid and was not saved.'))
+  }
+
+  return runTransaction([outfitStoreName], 'readwrite', (transaction, complete) => {
+    const outfitStore = transaction.objectStore(outfitStoreName)
+    outfitStore.clear()
+    for (const outfit of outfits) {
+      outfitStore.put(outfit)
+    }
+    complete(undefined)
+  })
+}
+
+export function persistOutfit(outfit: Outfit): Promise<void> {
+  if (!isOutfit(outfit)) {
+    return Promise.reject(new Error('Outfit data is invalid and was not saved.'))
+  }
+  return runRequest(outfitStoreName, 'readwrite', (store) => store.put(outfit)).then(() => undefined)
+}
+
+export function deleteOutfit(id: string): Promise<void> {
+  if (!id) {
+    return Promise.reject(new TypeError('An outfit ID is required.'))
+  }
+  return runRequest(outfitStoreName, 'readwrite', (store) => store.delete(id)).then(() => undefined)
+}
+
+export async function getCalendarEntries(): Promise<CalendarEntry[]> {
+  const result: unknown = await runRequest(calendarStoreName, 'readonly', (store) => store.getAll())
+  if (!Array.isArray(result) || !result.every(isCalendarEntry)) {
+    throw new Error('Saved calendar data is invalid and was not changed.')
+  }
+  return result
+}
+
+export function persistCalendarEntries(entries: CalendarEntry[]): Promise<void> {
+  if (!entries.every(isCalendarEntry)) {
+    return Promise.reject(new Error('Calendar data is invalid and was not saved.'))
+  }
+
+  return runTransaction([calendarStoreName], 'readwrite', (transaction, complete) => {
+    const calendarStore = transaction.objectStore(calendarStoreName)
+    calendarStore.clear()
+    for (const entry of entries) {
+      calendarStore.put(entry)
+    }
+    complete(undefined)
+  })
+}
+
+export function persistCalendarEntry(entry: CalendarEntry): Promise<void> {
+  if (!isCalendarEntry(entry)) {
+    return Promise.reject(new Error('Calendar entry is invalid and was not saved.'))
+  }
+  return runRequest(calendarStoreName, 'readwrite', (store) => store.put(entry)).then(() => undefined)
+}
+
+export function deleteCalendarEntry(id: string): Promise<void> {
+  if (!id) {
+    return Promise.reject(new TypeError('A calendar entry ID is required.'))
+  }
+  return runRequest(calendarStoreName, 'readwrite', (store) => store.delete(id)).then(() => undefined)
+}
+
+export async function getWearLogs(): Promise<WearLog[]> {
+  const result: unknown = await runRequest(wearLogStoreName, 'readonly', (store) => store.getAll())
+  if (!Array.isArray(result) || !result.every(isWearLog)) {
+    throw new Error('Saved wear history is invalid and was not changed.')
+  }
+  return result
+}
+
+export function persistWearLogs(logs: WearLog[]): Promise<void> {
+  const ids = new Set<string>()
+  const calendarEntryIds = new Set<string>()
+  const valid = logs.every((log) => {
+    if (!isWearLog(log) || ids.has(log.id)) return false
+    ids.add(log.id)
+    if (log.calendarEntryId !== null) {
+      if (calendarEntryIds.has(log.calendarEntryId)) return false
+      calendarEntryIds.add(log.calendarEntryId)
+    }
+    return true
+  })
+  if (!valid) {
+    return Promise.reject(new Error('Wear history is invalid or contains duplicate calendar records.'))
+  }
+
+  return runTransaction([wearLogStoreName], 'readwrite', (transaction, complete) => {
+    const store = transaction.objectStore(wearLogStoreName)
+    store.clear()
+    for (const log of logs) store.put(log)
+    complete(undefined)
+  })
+}
+
+export function createWearLog(log: WearLog): Promise<void> {
+  if (!isWearLog(log)) {
+    return Promise.reject(new Error('Wear log data is invalid and was not saved.'))
+  }
+
+  return runTransaction([wearLogStoreName], 'readwrite', (transaction, complete, fail) => {
+    const store = transaction.objectStore(wearLogStoreName)
+    const request = store.getAll()
+    request.onsuccess = () => {
+      const existing: unknown = request.result
+      if (!Array.isArray(existing) || !existing.every(isWearLog)) {
+        fail(new Error('Saved wear history is invalid and was not changed.'))
+        return
+      }
+      if (
+        log.calendarEntryId !== null &&
+        existing.some((entry) => entry.calendarEntryId === log.calendarEntryId)
+      ) {
+        fail(new DuplicateCalendarWearError())
+        return
+      }
+      store.add(log)
+      complete(undefined)
+    }
+  })
+}
+
+export function deleteWearLog(id: string): Promise<void> {
+  if (!id) {
+    return Promise.reject(new TypeError('A wear log ID is required.'))
+  }
+  return runRequest(wearLogStoreName, 'readwrite', (store) => store.delete(id)).then(() => undefined)
 }
 
 export async function saveImage(blob: Blob): Promise<string> {

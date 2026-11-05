@@ -1,16 +1,14 @@
 import type { Metadata } from 'next'
-import { Layers } from 'lucide-react'
-import { PagePlaceholder } from '@/components/layout/page-placeholder'
+import { OutfitStudio } from '@/components/create/outfit-studio'
 
 export const metadata: Metadata = { title: 'Create Outfit' }
 
-export default function CreatePage() {
-  return (
-    <PagePlaceholder
-      eyebrow="Outfit builder"
-      title="Create an Outfit"
-      icon={Layers}
-      description="Mix and match pieces from your closet into new looks. The outfit builder is coming next."
-    />
-  )
+export default async function CreatePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ edit?: string | string[] }>
+}) {
+  const edit = (await searchParams).edit
+  const editId = typeof edit === 'string' ? edit : undefined
+  return <OutfitStudio key={editId ?? 'new'} editId={editId} />
 }
