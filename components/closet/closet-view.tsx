@@ -28,6 +28,7 @@ export function ClosetView() {
   const [addOpen, setAddOpen] = useState(false)
   const [editing, setEditing] = useState<ClothingItem | null>(null)
   const [selected, setSelected] = useState<ClothingItem | null>(null)
+  const [mutationError, setMutationError] = useState<string | null>(null)
 
   const counts = useMemo(() => countByCategory(items), [items])
   const selectedItem = selected ? (items.find((item) => item.id === selected.id) ?? null) : null
@@ -40,6 +41,25 @@ export function ClosetView() {
   const openAdd = () => {
     setEditing(null)
     setAddOpen(true)
+  }
+
+  const handleToggleFavorite = async (id: string) => {
+    try {
+      await toggleFavorite(id)
+      setMutationError(null)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : 'Unable to update this favorite.')
+    }
+  }
+
+  const handleDeleteItem = async (id: string) => {
+    try {
+      await deleteItem(id)
+      setMutationError(null)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : 'Unable to delete this item.')
+      throw error
+    }
   }
 
   const emptyVariant = !items.length
@@ -60,6 +80,11 @@ export function ClosetView() {
         onAddClothing={openAdd}
         activeFilterCount={activeFilterCount(filters)}
       />
+      {mutationError && (
+        <p role="alert" className="rounded-xl bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {mutationError}
+        </p>
+      )}
 
       <CategoryTabs value={category} counts={counts} onChange={setCategory} />
 
@@ -83,7 +108,7 @@ export function ClosetView() {
         <ClosetGrid
           items={visibleItems}
           onSelect={setSelected}
-          onToggleFavorite={toggleFavorite}
+          onToggleFavorite={handleToggleFavorite}
         />
       )}
 
@@ -93,13 +118,13 @@ export function ClosetView() {
         onOpenChange={(open) => {
           if (!open) setSelected(null)
         }}
-        onToggleFavorite={toggleFavorite}
+        onToggleFavorite={handleToggleFavorite}
         onEdit={(item) => {
           setSelected(null)
           setEditing(item)
           setAddOpen(true)
         }}
-        onDelete={deleteItem}
+        onDelete={handleDeleteItem}
       />
 
       <ClosetFilters

@@ -333,14 +333,15 @@ function ScheduleDialog({
   items: ClothingItem[]
   initialDate: string
   onOpenChange: (open: boolean) => void
-  onAdd: (value: { outfitId: string; date: string; note: string }) => void
-  onUpdate: (entryId: string, value: { outfitId: string; date: string; note: string }) => void
+  onAdd: (value: { outfitId: string; date: string; note: string }) => Promise<void>
+  onUpdate: (entryId: string, value: { outfitId: string; date: string; note: string }) => Promise<void>
 }) {
   const [query, setQuery] = useState('')
   const [outfitId, setOutfitId] = useState('')
   const [date, setDate] = useState(initialDate)
   const [note, setNote] = useState(entry?.note ?? '')
   const [error, setError] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
 
   const currentOutfitId = entry && outfits.some((outfit) => outfit.id === entry.outfitId)
     ? entry.outfitId
@@ -368,7 +369,7 @@ function ScheduleDialog({
     onOpenChange(nextOpen)
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!isCalendarDate(date)) {
       setError('Choose a valid date.')
       return
@@ -382,17 +383,20 @@ function ScheduleDialog({
       return
     }
 
+    setIsSaving(true)
     try {
       if (mode === 'edit' && entry) {
-        onUpdate(entry.id, { outfitId: effectiveOutfitId, date, note: note.trim() })
+        await onUpdate(entry.id, { outfitId: effectiveOutfitId, date, note: note.trim() })
       } else {
-        onAdd({ outfitId: effectiveOutfitId, date, note: note.trim() })
+        await onAdd({ outfitId: effectiveOutfitId, date, note: note.trim() })
       }
       handleOpenChange(false)
     } catch (submitError) {
       setError(
         submitError instanceof Error ? submitError.message : 'Unable to save this schedule entry.',
       )
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -517,11 +521,11 @@ function ScheduleDialog({
           )}
           <Button
             type="button"
-            disabled={!canSubmit}
-            onClick={handleSubmit}
+            disabled={!canSubmit || isSaving}
+            onClick={() => void handleSubmit()}
             className="h-11 w-full rounded-full bg-olive text-olive-foreground hover:bg-olive-deep"
           >
-            {mode === 'edit' ? 'Save changes' : 'Add to calendar'}
+            {isSaving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Add to calendar'}
           </Button>
         </div>
       </DialogContent>
@@ -750,18 +754,18 @@ export function CalendarView() {
     setFeedback(null)
   }
 
-  const handleAdd = (value: { outfitId: string; date: string; note: string }) => {
+  const handleAdd = async (value: { outfitId: string; date: string; note: string }) => {
     if (
       entries.some((entry) => entry.date === value.date && entry.outfitId === value.outfitId)
     ) {
       throw new Error('This outfit is already scheduled for that date.')
     }
-    addEntry(value)
+    await addEntry(value)
     chooseDate(fromDateKey(value.date))
     setFeedback('Outfit added to your calendar.')
   }
 
-  const handleUpdate = (
+  const handleUpdate = async (
     entryId: string,
     value: { outfitId: string; date: string; note: string },
   ) => {
@@ -775,14 +779,22 @@ export function CalendarView() {
     ) {
       throw new Error('This outfit is already scheduled for that date.')
     }
-    updateEntry(entryId, value)
+    await updateEntry(entryId, value)
     chooseDate(fromDateKey(value.date))
     setFeedback('Your calendar entry was updated.')
   }
 
-  const handleRemove = (entry: CalendarEntry) => {
-    deleteEntry(entry.id)
-    setFeedback('Scheduled entry removed. The outfit is still saved.')
+  const handleRemove = async (entry: CalendarEntry) => {
+    try {
+      await deleteEntry(entry.id)
+      setFeedback('Scheduled entry removed. The outfit is still saved.')
+    } catch (error) {
+      setFeedback(
+        error instanceof Error
+          ? `Unable to remove this schedule entry. ${error.message}`
+          : 'Unable to remove this schedule entry.',
+      )
+    }
   }
 
   const handleMarkAsWorn = async (entry: CalendarEntry, note: string) => {
@@ -1041,7 +1053,7 @@ export function CalendarView() {
                 isWorn={wornCalendarEntryIds.has(entry.id)}
                 onMarkAsWorn={(note) => handleMarkAsWorn(entry, note)}
                 onEdit={() => openEditDialog(entry)}
-                onRemove={() => handleRemove(entry)}
+                onRemove={() => void handleRemove(entry)}
               />
             ))}
             {selectedEntries.length === 0 && (

@@ -103,6 +103,7 @@ export function OutfitStudio({ editId }: { editId?: string }) {
   const [name, setName] = useState(editingOutfit?.name ?? '')
   const [description, setDescription] = useState(editingOutfit?.description ?? '')
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
 
   const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items])
   const missingItemIds = editingOutfit
@@ -187,7 +188,7 @@ export function OutfitStudio({ editId }: { editId?: string }) {
     if (item.category !== 'Accessories') setActiveSlot(null)
   }
 
-  const handleSave = (event: FormEvent<HTMLFormElement>) => {
+  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const trimmedName = name.trim()
 
@@ -211,16 +212,17 @@ export function OutfitStudio({ editId }: { editId?: string }) {
     }
     const itemIds = [...selectedItemIds, ...missingItemIds]
 
+    setIsSaving(true)
     try {
       if (editingOutfit) {
-        updateOutfit(editingOutfit.id, {
+        await updateOutfit(editingOutfit.id, {
           name: trimmedName,
           description: description.trim(),
           itemIds,
         })
         setFeedback({ type: 'success', message: 'Your outfit changes were saved.' })
       } else {
-        addOutfit({
+        await addOutfit({
           name: trimmedName,
           description: description.trim(),
           itemIds,
@@ -236,6 +238,8 @@ export function OutfitStudio({ editId }: { editId?: string }) {
         type: 'error',
         message: error instanceof Error ? error.message : 'Unable to save this outfit.',
       })
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -432,10 +436,10 @@ export function OutfitStudio({ editId }: { editId?: string }) {
             )}
             <Button
               type="submit"
-              disabled={!baseIsValid || !name.trim()}
+              disabled={!baseIsValid || !name.trim() || isSaving}
               className="mt-5 h-11 w-full rounded-full bg-olive text-sm font-semibold text-olive-foreground hover:bg-olive-deep"
             >
-              {editingOutfit ? 'Save changes' : 'Save outfit'}
+              {isSaving ? 'Saving…' : editingOutfit ? 'Save changes' : 'Save outfit'}
             </Button>
           </form>
         </section>

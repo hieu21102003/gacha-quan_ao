@@ -8,6 +8,7 @@ export type ClothingCategory =
   | 'Accessories'
 
 export type WearStatus = 'Available' | 'In laundry' | 'Worn recently'
+export type ClothingProvenance = 'seed' | 'user' | 'unknown'
 
 export interface ClothingItem {
   id: string
@@ -22,6 +23,7 @@ export interface ClothingItem {
   price: number
   status: WearStatus
   favorite: boolean
+  provenance: ClothingProvenance
 }
 
 export interface Outfit {
@@ -87,6 +89,7 @@ export const closetItems: ClothingItem[] = [
     price: 89,
     status: 'Available',
     favorite: true,
+    provenance: 'seed',
   },
   {
     id: 'black-basic-tee',
@@ -101,6 +104,7 @@ export const closetItems: ClothingItem[] = [
     price: 19,
     status: 'Available',
     favorite: false,
+    provenance: 'seed',
   },
   {
     id: 'beige-linen-trousers',
@@ -115,6 +119,7 @@ export const closetItems: ClothingItem[] = [
     price: 69,
     status: 'Available',
     favorite: true,
+    provenance: 'seed',
   },
   {
     id: 'blue-straight-jeans',
@@ -129,6 +134,7 @@ export const closetItems: ClothingItem[] = [
     price: 88,
     status: 'Worn recently',
     favorite: false,
+    provenance: 'seed',
   },
   {
     id: 'black-tailored-trousers',
@@ -143,6 +149,7 @@ export const closetItems: ClothingItem[] = [
     price: 120,
     status: 'Available',
     favorite: false,
+    provenance: 'seed',
   },
   {
     id: 'cream-knit-sweater',
@@ -157,6 +164,7 @@ export const closetItems: ClothingItem[] = [
     price: 95,
     status: 'In laundry',
     favorite: true,
+    provenance: 'seed',
   },
   {
     id: 'white-sneakers',
@@ -171,6 +179,7 @@ export const closetItems: ClothingItem[] = [
     price: 245,
     status: 'Available',
     favorite: true,
+    provenance: 'seed',
   },
   {
     id: 'black-leather-loafers',
@@ -185,6 +194,7 @@ export const closetItems: ClothingItem[] = [
     price: 310,
     status: 'Available',
     favorite: false,
+    provenance: 'seed',
   },
   {
     id: 'brown-leather-bag',
@@ -199,6 +209,7 @@ export const closetItems: ClothingItem[] = [
     price: 390,
     status: 'Available',
     favorite: true,
+    provenance: 'seed',
   },
   {
     id: 'black-shoulder-bag',
@@ -213,6 +224,7 @@ export const closetItems: ClothingItem[] = [
     price: 275,
     status: 'Worn recently',
     favorite: false,
+    provenance: 'seed',
   },
   {
     id: 'beige-trench-coat',
@@ -227,6 +239,7 @@ export const closetItems: ClothingItem[] = [
     price: 890,
     status: 'Available',
     favorite: true,
+    provenance: 'seed',
   },
   {
     id: 'silver-minimalist-watch',
@@ -241,5 +254,6 @@ export const closetItems: ClothingItem[] = [
     price: 159,
     status: 'Available',
     favorite: false,
+    provenance: 'seed',
   },
 ]

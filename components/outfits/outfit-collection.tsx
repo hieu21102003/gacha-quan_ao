@@ -88,7 +88,7 @@ function OutfitCard({
   outfit: Outfit
   items: ClothingItem[]
   onOpen: () => void
-  onToggleFavorite: () => void
+  onToggleFavorite: () => Promise<void>
 }) {
   const { items: outfitItems, missingItemIds } = resolveOutfitItems(outfit, items)
 
@@ -105,7 +105,7 @@ function OutfitCard({
         </button>
         <button
           type="button"
-          onClick={onToggleFavorite}
+          onClick={() => void onToggleFavorite()}
           aria-label={outfit.favorite ? `Remove ${outfit.name} from favorites` : `Add ${outfit.name} to favorites`}
           aria-pressed={outfit.favorite}
           className="absolute right-2.5 top-2.5 flex size-9 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm backdrop-blur transition-transform active:scale-95"
@@ -147,11 +147,28 @@ function OutfitDetailsDialog({
   items: ClothingItem[]
   open: boolean
   onOpenChange: (open: boolean) => void
-  onToggleFavorite: (id: string) => void
-  onDelete: (id: string) => void
+  onToggleFavorite: (id: string) => Promise<void>
+  onDelete: (id: string) => Promise<void>
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
   const resolved = outfit ? resolveOutfitItems(outfit, items) : null
+
+  const handleDelete = async () => {
+    if (!outfit) return
+    setIsDeleting(true)
+    setActionError(null)
+    try {
+      await onDelete(outfit.id)
+      setConfirmingDelete(false)
+      onOpenChange(false)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Unable to delete this outfit.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   return (
     <Dialog
@@ -235,6 +252,9 @@ function OutfitDetailsDialog({
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   This removes the saved outfit only. Clothing items in your wardrobe will not be changed.
                 </p>
+                {actionError && (
+                  <p role="alert" className="mt-2 text-xs text-destructive">{actionError}</p>
+                )}
                 <div className="mt-4 flex gap-2">
                   <Button
                     type="button"
@@ -248,13 +268,10 @@ function OutfitDetailsDialog({
                     type="button"
                     variant="destructive"
                     className="h-10 flex-1 rounded-full"
-                    onClick={() => {
-                      onDelete(outfit.id)
-                      setConfirmingDelete(false)
-                      onOpenChange(false)
-                    }}
+                    disabled={isDeleting}
+                    onClick={() => void handleDelete()}
                   >
-                    Delete outfit
+                    {isDeleting ? 'Deleting…' : 'Delete outfit'}
                   </Button>
                 </div>
               </div>
@@ -272,7 +289,7 @@ function OutfitDetailsDialog({
                   variant="outline"
                   className="h-11 rounded-full"
                   aria-pressed={outfit.favorite}
-                  onClick={() => onToggleFavorite(outfit.id)}
+                  onClick={() => void onToggleFavorite(outfit.id)}
                 >
                   <Heart
                     className={cn(outfit.favorite && 'fill-olive text-olive')}
@@ -304,6 +321,26 @@ export function OutfitCollection() {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<OutfitFilter>('All outfits')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [mutationError, setMutationError] = useState<string | null>(null)
+
+  const handleToggleFavorite = async (id: string) => {
+    try {
+      await toggleOutfitFavorite(id)
+      setMutationError(null)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : 'Unable to update this favorite.')
+    }
+  }
+
+  const handleDeleteOutfit = async (id: string) => {
+    try {
+      await deleteOutfit(id)
+      setMutationError(null)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : 'Unable to delete this outfit.')
+      throw error
+    }
+  }
 
   const sortedOutfits = useMemo(
     () => [...outfits].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
@@ -348,6 +385,11 @@ export function OutfitCollection() {
           Create an outfit
         </Link>
       </header>
+      {mutationError && (
+        <p role="alert" className="rounded-xl bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {mutationError}
+        </p>
+      )}
 
       <section aria-label="Saved outfit filters" className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -443,7 +485,7 @@ export function OutfitCollection() {
                     outfit={outfit}
                     items={items}
                     onOpen={() => setSelectedId(outfit.id)}
-                    onToggleFavorite={() => toggleOutfitFavorite(outfit.id)}
+                    onToggleFavorite={() => handleToggleFavorite(outfit.id)}
                   />
                 )
               })}
@@ -459,8 +501,8 @@ export function OutfitCollection() {
         onOpenChange={(open) => {
           if (!open) setSelectedId(null)
         }}
-        onToggleFavorite={toggleOutfitFavorite}
-        onDelete={deleteOutfit}
+        onToggleFavorite={handleToggleFavorite}
+        onDelete={handleDeleteOutfit}
       />
     </div>
   )

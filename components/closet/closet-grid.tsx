@@ -6,7 +6,7 @@ import type { ClothingItem } from '@/lib/wardrobe-data'
 interface ClosetGridProps {
   items: ClothingItem[]
   onSelect: (item: ClothingItem) => void
-  onToggleFavorite: (id: string) => void
+  onToggleFavorite: (id: string) => Promise<void>
 }
 
 export function ClosetGrid({ items, onSelect, onToggleFavorite }: ClosetGridProps) {

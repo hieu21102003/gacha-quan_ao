@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { FilterChip } from '@/components/closet/filter-chip'
 import { useClothingImage } from '@/components/closet/use-clothing-image'
 import { cn } from '@/lib/utils'
-import { deleteImage, isStoredImageReference, saveImage } from '@/lib/image-storage'
+import { deleteImageIfUnreferenced, saveImage } from '@/lib/image-storage'
 import {
   clothingCategories,
   clothingColors,
@@ -92,10 +92,6 @@ export function AddClothingForm({ item, onSaved }: AddClothingFormProps) {
         throw new Error('Please choose a photo before saving this item.')
       }
 
-      if (item && file && isStoredImageReference(item.image)) {
-        await deleteImage(item.image)
-      }
-
       const payload = {
         name: name.trim(),
         category,
@@ -111,16 +107,16 @@ export function AddClothingForm({ item, onSaved }: AddClothingFormProps) {
       } as const
 
       if (item) {
-        updateItem(item.id, payload)
+        await updateItem(item.id, payload)
       } else {
-        addItem(payload)
+        await addItem(payload)
       }
       onSaved()
     } catch (error) {
       let message = error instanceof Error ? error.message : 'Unable to save this clothing item.'
       if (newlyStoredImage) {
         try {
-          await deleteImage(newlyStoredImage)
+          await deleteImageIfUnreferenced(newlyStoredImage)
         } catch (cleanupError) {
           const cleanupMessage =
             cleanupError instanceof Error ? cleanupError.message : 'Unable to clean up the new image.'

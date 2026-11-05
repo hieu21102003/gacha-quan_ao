@@ -1,7 +1,9 @@
 import {
+  closetItems,
   clothingCategories,
   wearStatuses,
   type ClothingItem,
+  type ClothingProvenance,
   type Outfit,
 } from '@/lib/wardrobe-data'
 import { isCalendarDate, type CalendarEntry } from '@/lib/calendar-data'
@@ -12,7 +14,7 @@ import {
 } from '@/lib/wear-log-data'
 
 const databaseName = 'virtual-wardrobe'
-const databaseVersion = 5
+const databaseVersion = 6
 const imageStoreName = 'images'
 const wardrobeStoreName = 'wardrobe'
 const metadataStoreName = 'metadata'
@@ -37,6 +39,67 @@ export function isStoredImageReference(value: string | null | undefined) {
   return value.startsWith(imageReferencePrefix)
 }
 
+type StoreName = 'wardrobe' | 'outfits' | 'calendar' | 'wearLogs'
+
+const storageChangeChannelName = 'virtual-wardrobe-storage-changes'
+
+function notifyStorageChange(store: StoreName) {
+  if (typeof BroadcastChannel === 'undefined') return
+  const channel = new BroadcastChannel(storageChangeChannelName)
+  channel.postMessage({ store })
+  channel.close()
+}
+
+export function subscribeToStorageChanges(store: StoreName, listener: () => void) {
+  if (typeof window === 'undefined') return () => undefined
+
+  let channel: BroadcastChannel | null = null
+  if (typeof BroadcastChannel !== 'undefined') {
+    channel = new BroadcastChannel(storageChangeChannelName)
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      if (
+        typeof event.data === 'object' &&
+        event.data !== null &&
+        'store' in event.data &&
+        event.data.store === store
+      ) {
+        listener()
+      }
+    }
+  }
+
+  const refreshOnFocus = () => listener()
+  window.addEventListener('focus', refreshOnFocus)
+  document.addEventListener('visibilitychange', refreshOnFocus)
+
+  return () => {
+    channel?.close()
+    window.removeEventListener('focus', refreshOnFocus)
+    document.removeEventListener('visibilitychange', refreshOnFocus)
+  }
+}
+
+function sameSeedRecord(record: Record<string, unknown>, seed: ClothingItem) {
+  return (
+    record.id === seed.id &&
+    record.name === seed.name &&
+    record.category === seed.category &&
+    record.image === seed.image &&
+    record.imageAlt === seed.imageAlt &&
+    record.color === seed.color &&
+    record.brand === seed.brand &&
+    Array.isArray(record.seasons) &&
+    record.seasons.length === seed.seasons.length &&
+    record.seasons.every((value, index) => value === seed.seasons[index]) &&
+    Array.isArray(record.styles) &&
+    record.styles.length === seed.styles.length &&
+    record.styles.every((value, index) => value === seed.styles[index]) &&
+    record.price === seed.price &&
+    record.status === seed.status &&
+    record.favorite === seed.favorite
+  )
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   if (typeof indexedDB === 'undefined') {
     return Promise.reject(new Error('Image storage is unavailable in this browser.'))
@@ -46,7 +109,7 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = indexedDB.open(databaseName, databaseVersion)
     let settled = false
 
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const database = request.result
       if (!database.objectStoreNames.contains(imageStoreName)) {
         database.createObjectStore(imageStoreName, { keyPath: 'id' })
@@ -65,6 +128,29 @@ function openDatabase(): Promise<IDBDatabase> {
       }
       if (!database.objectStoreNames.contains(wearLogStoreName)) {
         database.createObjectStore(wearLogStoreName, { keyPath: 'id' })
+      }
+
+      if ((event as IDBVersionChangeEvent).oldVersion < 6) {
+        const wardrobeStore = request.transaction?.objectStore(wardrobeStoreName)
+        const cursorRequest = wardrobeStore?.openCursor()
+        if (cursorRequest) {
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result
+            if (!cursor) return
+
+            const value: unknown = cursor.value
+            if (typeof value === 'object' && value !== null) {
+              const record = value as Record<string, unknown>
+              if (!('provenance' in record)) {
+                const seed = closetItems.find((item) => item.id === record.id)
+                const provenance: ClothingProvenance =
+                  seed && sameSeedRecord(record, seed) ? 'seed' : 'unknown'
+                cursor.update({ ...record, provenance })
+              }
+            }
+            cursor.continue()
+          }
+        }
       }
     }
 
@@ -188,7 +274,10 @@ function isClothingItem(value: unknown): value is ClothingItem {
     typeof record.price === 'number' &&
     Number.isFinite(record.price) &&
     wearStatuses.includes(record.status as (typeof wearStatuses)[number]) &&
-    typeof record.favorite === 'boolean'
+    typeof record.favorite === 'boolean' &&
+    (record.provenance === 'seed' ||
+      record.provenance === 'user' ||
+      record.provenance === 'unknown')
   )
 }
 
@@ -214,7 +303,7 @@ function isCalendarEntry(value: unknown): value is CalendarEntry {
     typeof record.id === 'string' &&
     record.id.length > 0 &&
     typeof record.outfitId === 'string' &&
-    record.outfitId.length > 0 &&
+    record.outfitId.trim().length > 0 &&
     typeof record.date === 'string' &&
     isCalendarDate(record.date) &&
     typeof record.note === 'string' &&
@@ -286,23 +375,116 @@ export function initializeWardrobe(seedItems: ClothingItem[]): Promise<ClothingI
   )
 }
 
-export function persistWardrobe(items: ClothingItem[]): Promise<void> {
-  return runTransaction(
-    [wardrobeStoreName, metadataStoreName],
+export async function getWardrobeItems(): Promise<ClothingItem[]> {
+  const result: unknown = await runRequest(wardrobeStoreName, 'readonly', (store) => store.getAll())
+  if (!Array.isArray(result) || !result.every(isClothingItem)) {
+    throw new Error('Saved wardrobe data is invalid and was not changed.')
+  }
+  return result
+}
+
+export async function addWardrobeItem(item: ClothingItem): Promise<ClothingItem> {
+  if (!isClothingItem(item)) {
+    throw new Error('Clothing item data is invalid and was not saved.')
+  }
+  await runRequest(wardrobeStoreName, 'readwrite', (store) => store.add(item))
+  notifyStorageChange(wardrobeStoreName)
+  return item
+}
+
+export async function updateWardrobeItem(
+  id: string,
+  update: (current: ClothingItem) => ClothingItem,
+): Promise<ClothingItem> {
+  if (!id) throw new TypeError('A clothing item ID is required.')
+
+  const updated = await runTransaction<ClothingItem>(
+    [wardrobeStoreName, imageStoreName],
     'readwrite',
-    (transaction, complete) => {
+    (transaction, complete, fail) => {
       const wardrobeStore = transaction.objectStore(wardrobeStoreName)
-      wardrobeStore.clear()
-      for (const item of items) {
-        wardrobeStore.put(item)
+      const request = wardrobeStore.get(id)
+      request.onsuccess = () => {
+        const value: unknown = request.result
+        if (!isClothingItem(value)) {
+          fail(new Error('The clothing item is no longer available or is invalid.'))
+          return
+        }
+
+        try {
+          const next = update(value)
+          if (next.id !== id || !isClothingItem(next)) {
+            fail(new Error('Clothing item changes are invalid and were not saved.'))
+            return
+          }
+
+          wardrobeStore.put(next)
+          if (value.image !== next.image && isStoredImageReference(value.image)) {
+            const allItemsRequest = wardrobeStore.getAll()
+            allItemsRequest.onsuccess = () => {
+              const allItems: unknown = allItemsRequest.result
+              if (!Array.isArray(allItems) || !allItems.every(isClothingItem)) {
+                fail(new Error('Saved wardrobe data is invalid; the previous image was preserved.'))
+                return
+              }
+              if (!allItems.some((item) => item.id !== id && item.image === value.image)) {
+                transaction.objectStore(imageStoreName).delete(value.image)
+              }
+            }
+          }
+          complete(next)
+        } catch (error: unknown) {
+          fail(error instanceof Error ? error : new Error('Clothing item changes were not saved.'))
+        }
       }
-      transaction.objectStore(metadataStoreName).put({
-        id: wardrobeInitializedKey,
-        initialized: true,
-      } satisfies WardrobeMetadata)
-      complete(undefined)
     },
   )
+
+  notifyStorageChange(wardrobeStoreName)
+  return updated
+}
+
+export async function deleteWardrobeItem(id: string): Promise<void> {
+  if (!id) throw new TypeError('A clothing item ID is required.')
+
+  await runTransaction(
+    [wardrobeStoreName, imageStoreName],
+    'readwrite',
+    (transaction, complete, fail) => {
+      const wardrobeStore = transaction.objectStore(wardrobeStoreName)
+      const request = wardrobeStore.get(id)
+      request.onsuccess = () => {
+        const value: unknown = request.result
+        if (value === undefined) {
+          complete(undefined)
+          return
+        }
+        if (!isClothingItem(value)) {
+          fail(new Error('The clothing item is invalid and was not deleted.'))
+          return
+        }
+
+        const allItemsRequest = wardrobeStore.getAll()
+        allItemsRequest.onsuccess = () => {
+          const allItems: unknown = allItemsRequest.result
+          if (!Array.isArray(allItems) || !allItems.every(isClothingItem)) {
+            fail(new Error('Saved wardrobe data is invalid; no data was deleted.'))
+            return
+          }
+
+          wardrobeStore.delete(id)
+          if (
+            isStoredImageReference(value.image) &&
+            !allItems.some((item) => item.id !== id && item.image === value.image)
+          ) {
+            transaction.objectStore(imageStoreName).delete(value.image)
+          }
+          complete(undefined)
+        }
+      }
+    },
+  )
+  notifyStorageChange(wardrobeStoreName)
 }
 
 export async function getOutfits(): Promise<Outfit[]> {
@@ -313,33 +495,54 @@ export async function getOutfits(): Promise<Outfit[]> {
   return result
 }
 
-export function persistOutfits(outfits: Outfit[]): Promise<void> {
-  if (!outfits.every(isOutfit)) {
-    return Promise.reject(new Error('Outfit data is invalid and was not saved.'))
-  }
-
-  return runTransaction([outfitStoreName], 'readwrite', (transaction, complete) => {
-    const outfitStore = transaction.objectStore(outfitStoreName)
-    outfitStore.clear()
-    for (const outfit of outfits) {
-      outfitStore.put(outfit)
-    }
-    complete(undefined)
-  })
+export async function addOutfitRecord(outfit: Outfit): Promise<Outfit> {
+  if (!isOutfit(outfit)) throw new Error('Outfit data is invalid and was not saved.')
+  await runRequest(outfitStoreName, 'readwrite', (store) => store.add(outfit))
+  notifyStorageChange(outfitStoreName)
+  return outfit
 }
 
-export function persistOutfit(outfit: Outfit): Promise<void> {
-  if (!isOutfit(outfit)) {
-    return Promise.reject(new Error('Outfit data is invalid and was not saved.'))
-  }
-  return runRequest(outfitStoreName, 'readwrite', (store) => store.put(outfit)).then(() => undefined)
+export async function updateOutfitRecord(
+  id: string,
+  update: (current: Outfit) => Outfit,
+): Promise<Outfit> {
+  if (!id) throw new TypeError('An outfit ID is required.')
+  const updated = await runTransaction<Outfit>(
+    [outfitStoreName],
+    'readwrite',
+    (transaction, complete, fail) => {
+      const store = transaction.objectStore(outfitStoreName)
+      const request = store.get(id)
+      request.onsuccess = () => {
+        const current: unknown = request.result
+        if (!isOutfit(current)) {
+          fail(new Error('The saved outfit is no longer available or is invalid.'))
+          return
+        }
+        try {
+          const next = update(current)
+          if (next.id !== id || !isOutfit(next)) {
+            fail(new Error('Outfit changes are invalid and were not saved.'))
+            return
+          }
+          store.put(next)
+          complete(next)
+        } catch (error: unknown) {
+          fail(error instanceof Error ? error : new Error('Outfit changes were not saved.'))
+        }
+      }
+    },
+  )
+  notifyStorageChange(outfitStoreName)
+  return updated
 }
 
 export function deleteOutfit(id: string): Promise<void> {
   if (!id) {
     return Promise.reject(new TypeError('An outfit ID is required.'))
   }
-  return runRequest(outfitStoreName, 'readwrite', (store) => store.delete(id)).then(() => undefined)
+  return runRequest(outfitStoreName, 'readwrite', (store) => store.delete(id))
+    .then(() => notifyStorageChange(outfitStoreName))
 }
 
 export async function getCalendarEntries(): Promise<CalendarEntry[]> {
@@ -350,33 +553,89 @@ export async function getCalendarEntries(): Promise<CalendarEntry[]> {
   return result
 }
 
-export function persistCalendarEntries(entries: CalendarEntry[]): Promise<void> {
-  if (!entries.every(isCalendarEntry)) {
-    return Promise.reject(new Error('Calendar data is invalid and was not saved.'))
-  }
-
-  return runTransaction([calendarStoreName], 'readwrite', (transaction, complete) => {
-    const calendarStore = transaction.objectStore(calendarStoreName)
-    calendarStore.clear()
-    for (const entry of entries) {
-      calendarStore.put(entry)
+export async function addCalendarEntry(entry: CalendarEntry): Promise<CalendarEntry> {
+  if (!isCalendarEntry(entry)) throw new Error('Calendar entry is invalid and was not saved.')
+  await runTransaction([calendarStoreName], 'readwrite', (transaction, complete, fail) => {
+    const store = transaction.objectStore(calendarStoreName)
+    const request = store.getAll()
+    request.onsuccess = () => {
+      const current: unknown = request.result
+      if (!Array.isArray(current) || !current.every(isCalendarEntry)) {
+        fail(new Error('Saved calendar data is invalid and was not changed.'))
+        return
+      }
+      if (current.some((candidate) => candidate.outfitId === entry.outfitId && candidate.date === entry.date)) {
+        fail(new Error('This outfit is already scheduled for that date.'))
+        return
+      }
+      store.add(entry)
+      complete(entry)
     }
-    complete(undefined)
   })
+  notifyStorageChange(calendarStoreName)
+  return entry
 }
 
-export function persistCalendarEntry(entry: CalendarEntry): Promise<void> {
-  if (!isCalendarEntry(entry)) {
-    return Promise.reject(new Error('Calendar entry is invalid and was not saved.'))
-  }
-  return runRequest(calendarStoreName, 'readwrite', (store) => store.put(entry)).then(() => undefined)
+export async function updateCalendarEntry(
+  id: string,
+  update: (current: CalendarEntry) => CalendarEntry,
+): Promise<CalendarEntry> {
+  if (!id) throw new TypeError('A calendar entry ID is required.')
+  const updated = await runTransaction<CalendarEntry>(
+    [calendarStoreName],
+    'readwrite',
+    (transaction, complete, fail) => {
+      const store = transaction.objectStore(calendarStoreName)
+      const request = store.get(id)
+      request.onsuccess = () => {
+        const current: unknown = request.result
+        if (!isCalendarEntry(current)) {
+          fail(new Error('The calendar entry is no longer available or is invalid.'))
+          return
+        }
+        try {
+          const next = update(current)
+          if (next.id !== id || !isCalendarEntry(next)) {
+            fail(new Error('Calendar entry changes are invalid and were not saved.'))
+            return
+          }
+          const allRequest = store.getAll()
+          allRequest.onsuccess = () => {
+            const entries: unknown = allRequest.result
+            if (!Array.isArray(entries) || !entries.every(isCalendarEntry)) {
+              fail(new Error('Saved calendar data is invalid and was not changed.'))
+              return
+            }
+            if (
+              entries.some(
+                (candidate) =>
+                  candidate.id !== id &&
+                  candidate.outfitId === next.outfitId &&
+                  candidate.date === next.date,
+              )
+            ) {
+              fail(new Error('This outfit is already scheduled for that date.'))
+              return
+            }
+            store.put(next)
+            complete(next)
+          }
+        } catch (error: unknown) {
+          fail(error instanceof Error ? error : new Error('Calendar entry changes were not saved.'))
+        }
+      }
+    },
+  )
+  notifyStorageChange(calendarStoreName)
+  return updated
 }
 
 export function deleteCalendarEntry(id: string): Promise<void> {
   if (!id) {
     return Promise.reject(new TypeError('A calendar entry ID is required.'))
   }
-  return runRequest(calendarStoreName, 'readwrite', (store) => store.delete(id)).then(() => undefined)
+  return runRequest(calendarStoreName, 'readwrite', (store) => store.delete(id))
+    .then(() => notifyStorageChange(calendarStoreName))
 }
 
 export async function getWearLogs(): Promise<WearLog[]> {
@@ -387,36 +646,12 @@ export async function getWearLogs(): Promise<WearLog[]> {
   return result
 }
 
-export function persistWearLogs(logs: WearLog[]): Promise<void> {
-  const ids = new Set<string>()
-  const calendarEntryIds = new Set<string>()
-  const valid = logs.every((log) => {
-    if (!isWearLog(log) || ids.has(log.id)) return false
-    ids.add(log.id)
-    if (log.calendarEntryId !== null) {
-      if (calendarEntryIds.has(log.calendarEntryId)) return false
-      calendarEntryIds.add(log.calendarEntryId)
-    }
-    return true
-  })
-  if (!valid) {
-    return Promise.reject(new Error('Wear history is invalid or contains duplicate calendar records.'))
-  }
-
-  return runTransaction([wearLogStoreName], 'readwrite', (transaction, complete) => {
-    const store = transaction.objectStore(wearLogStoreName)
-    store.clear()
-    for (const log of logs) store.put(log)
-    complete(undefined)
-  })
-}
-
-export function createWearLog(log: WearLog): Promise<void> {
+export async function createWearLog(log: WearLog): Promise<void> {
   if (!isWearLog(log)) {
-    return Promise.reject(new Error('Wear log data is invalid and was not saved.'))
+    throw new Error('Wear log data is invalid and was not saved.')
   }
 
-  return runTransaction([wearLogStoreName], 'readwrite', (transaction, complete, fail) => {
+  await runTransaction([wearLogStoreName], 'readwrite', (transaction, complete, fail) => {
     const store = transaction.objectStore(wearLogStoreName)
     const request = store.getAll()
     request.onsuccess = () => {
@@ -436,13 +671,15 @@ export function createWearLog(log: WearLog): Promise<void> {
       complete(undefined)
     }
   })
+  notifyStorageChange(wearLogStoreName)
 }
 
 export function deleteWearLog(id: string): Promise<void> {
   if (!id) {
     return Promise.reject(new TypeError('A wear log ID is required.'))
   }
-  return runRequest(wearLogStoreName, 'readwrite', (store) => store.delete(id)).then(() => undefined)
+  return runRequest(wearLogStoreName, 'readwrite', (store) => store.delete(id))
+    .then(() => notifyStorageChange(wearLogStoreName))
 }
 
 export async function saveImage(blob: Blob): Promise<string> {
@@ -501,4 +738,29 @@ export async function deleteImage(reference: string): Promise<void> {
   } catch (error) {
     throw new Error('Unable to remove the image from this browser.', { cause: error })
   }
+}
+
+export async function deleteImageIfUnreferenced(reference: string): Promise<boolean> {
+  if (!isStoredImageReference(reference)) return false
+
+  return runTransaction(
+    [wardrobeStoreName, imageStoreName],
+    'readwrite',
+    (transaction, complete, fail) => {
+      const request = transaction.objectStore(wardrobeStoreName).getAll()
+      request.onsuccess = () => {
+        const items: unknown = request.result
+        if (!Array.isArray(items) || !items.every(isClothingItem)) {
+          fail(new Error('Saved wardrobe data is invalid; the image was preserved.'))
+          return
+        }
+        if (items.some((item) => item.image === reference)) {
+          complete(false)
+          return
+        }
+        transaction.objectStore(imageStoreName).delete(reference)
+        complete(true)
+      }
+    },
+  )
 }

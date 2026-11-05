@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 interface ClothingCardProps {
   item: ClothingItem
   onSelect: (item: ClothingItem) => void
-  onToggleFavorite: (id: string) => void
+  onToggleFavorite: (id: string) => Promise<void>
 }
 
 export function ClothingCard({ item, onSelect, onToggleFavorite }: ClothingCardProps) {
@@ -42,7 +42,7 @@ export function ClothingCard({ item, onSelect, onToggleFavorite }: ClothingCardP
         </button>
         <button
           type="button"
-          onClick={() => onToggleFavorite(item.id)}
+          onClick={() => void onToggleFavorite(item.id)}
           aria-label={item.favorite ? `Remove ${item.name} from favorites` : `Add ${item.name} to favorites`}
           aria-pressed={item.favorite}
           className="absolute right-2.5 top-2.5 flex size-8 items-center justify-center rounded-full bg-background/90 text-foreground backdrop-blur transition-transform active:scale-95"

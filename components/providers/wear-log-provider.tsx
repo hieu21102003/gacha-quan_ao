@@ -17,7 +17,7 @@ import {
   createWearLog as persistNewWearLog,
   deleteWearLog as removeWearLog,
   getWearLogs,
-  persistWearLogs,
+  subscribeToStorageChanges,
 } from '@/lib/image-storage'
 import {
   DuplicateCalendarWearError,
@@ -80,6 +80,21 @@ export function WearLogProvider({ children }: { children: ReactNode }) {
       active = false
     }
   }, [loadAttempt])
+
+  const refreshFromStorage = useCallback(async () => {
+    try {
+      const storedLogs = await getWearLogs()
+      logsRef.current = storedLogs
+      setLogs(storedLogs)
+    } catch (error: unknown) {
+      setPersistenceError(errorMessage(error, 'Unable to refresh wear history from this browser.'))
+    }
+  }, [])
+
+  useEffect(
+    () => subscribeToStorageChanges('wearLogs', () => void refreshFromStorage()),
+    [refreshFromStorage],
+  )
 
   const enqueueWrite = useCallback(<T,>(operation: () => Promise<T>) => {
     const result = writeQueueRef.current.then(operation)
@@ -170,20 +185,16 @@ export function WearLogProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const retryStorage = useCallback(
-    () =>
-      enqueueWrite(async () => {
-        await persistWearLogs(logsRef.current)
-        setPersistenceError(null)
-      }),
-    [enqueueWrite],
-  )
-
-  const handleRetryStorage = useCallback(() => {
-    void retryStorage().catch((error: unknown) => {
-      setPersistenceError(errorMessage(error, 'Unable to save wear history in this browser.'))
-    })
-  }, [retryStorage])
+  const retryStorage = useCallback(async () => {
+    try {
+      const storedLogs = await getWearLogs()
+      logsRef.current = storedLogs
+      setLogs(storedLogs)
+      setPersistenceError(null)
+    } catch (error: unknown) {
+      setPersistenceError(errorMessage(error, 'Unable to reload wear history from this browser.'))
+    }
+  }, [])
 
   const value = useMemo(
     () => ({
@@ -247,10 +258,10 @@ export function WearLogProvider({ children }: { children: ReactNode }) {
           <span>Wear history changes could not be saved to this browser. {persistenceError}</span>
           <button
             type="button"
-            onClick={handleRetryStorage}
+            onClick={retryStorage}
             className="rounded-full border border-current px-3 py-1 font-semibold"
           >
-            Retry saving
+            Reload saved data
           </button>
         </div>
       )}

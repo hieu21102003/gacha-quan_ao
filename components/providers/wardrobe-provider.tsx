@@ -10,7 +10,14 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { initializeWardrobe, persistWardrobe } from '@/lib/image-storage'
+import {
+  addWardrobeItem,
+  deleteWardrobeItem,
+  getWardrobeItems,
+  initializeWardrobe,
+  subscribeToStorageChanges,
+  updateWardrobeItem,
+} from '@/lib/image-storage'
 import {
   closetItems as seedItems,
   type ClothingCategory,
@@ -34,12 +41,13 @@ export const emptyClosetFilters: ClosetFiltersState = {
 
 interface WardrobeContextValue {
   items: ClothingItem[]
-  addItem: (item: Omit<ClothingItem, 'id'>) => ClothingItem
-  updateItem: (id: string, patch: Partial<ClothingItem>) => void
-  deleteItem: (id: string) => void
-  toggleFavorite: (id: string) => void
+  provenanceAmbiguities: ClothingItem[]
+  addItem: (item: Omit<ClothingItem, 'id' | 'provenance'>) => Promise<ClothingItem>
+  updateItem: (id: string, patch: Partial<ClothingItem>) => Promise<ClothingItem>
+  deleteItem: (id: string) => Promise<void>
+  toggleFavorite: (id: string) => Promise<ClothingItem>
   storageError: string | null
-  retryStorage: () => void
+  retryStorage: () => Promise<void>
 }
 
 const WardrobeContext = createContext<WardrobeContextValue | null>(null)
@@ -48,10 +56,20 @@ function createId() {
   return `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function upsertItem(current: ClothingItem[], item: ClothingItem) {
+  const index = current.findIndex((candidate) => candidate.id === item.id)
+  if (index < 0) return [item, ...current]
+  return current.map((candidate) => (candidate.id === item.id ? item : candidate))
+}
+
+function messageFromError(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback
+}
+
 export function WardrobeProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ClothingItem[]>([])
   const itemsRef = useRef(items)
-  const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const [provenanceAmbiguities, setProvenanceAmbiguities] = useState<ClothingItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -67,6 +85,7 @@ export function WardrobeProvider({ children }: { children: ReactNode }) {
         if (!active) return
         itemsRef.current = storedItems
         setItems(storedItems)
+        setProvenanceAmbiguities(storedItems.filter((item) => item.provenance === 'unknown'))
         setIsLoading(false)
       })
       .catch((error: unknown) => {
@@ -82,60 +101,120 @@ export function WardrobeProvider({ children }: { children: ReactNode }) {
     }
   }, [loadAttempt])
 
-  const enqueuePersistence = useCallback((snapshot: ClothingItem[]) => {
-    persistenceQueueRef.current = persistenceQueueRef.current
-      .catch(() => undefined)
-      .then(() => persistWardrobe(snapshot))
-      .then(() => setStorageError(null))
-      .catch((error: unknown) => {
-        setStorageError(
-          error instanceof Error ? error.message : 'Unable to save wardrobe changes in this browser.',
-        )
-      })
+  const refreshFromStorage = useCallback(async () => {
+    try {
+      const storedItems = await getWardrobeItems()
+      itemsRef.current = storedItems
+      setItems(storedItems)
+      setProvenanceAmbiguities(storedItems.filter((item) => item.provenance === 'unknown'))
+    } catch (error: unknown) {
+      setStorageError(messageFromError(error, 'Unable to refresh your wardrobe from this browser.'))
+    }
   }, [])
 
-  const commitItems = useCallback(
-    (nextItems: ClothingItem[]) => {
-      itemsRef.current = nextItems
-      setItems(nextItems)
-      enqueuePersistence(nextItems)
-    },
-    [enqueuePersistence],
+  useEffect(
+    () => subscribeToStorageChanges('wardrobe', () => void refreshFromStorage()),
+    [refreshFromStorage],
   )
 
-  const addItem = useCallback((item: Omit<ClothingItem, 'id'>) => {
-    const next: ClothingItem = { ...item, id: createId() }
-    commitItems([next, ...itemsRef.current])
-    return next
-  }, [commitItems])
+  const addItem = useCallback(
+    async (item: Omit<ClothingItem, 'id' | 'provenance'>) => {
+      const next: ClothingItem = { ...item, id: createId(), provenance: 'user' }
+      try {
+        await addWardrobeItem(next)
+        itemsRef.current = upsertItem(itemsRef.current, next)
+        setItems(itemsRef.current)
+        setStorageError(null)
+        return next
+      } catch (error: unknown) {
+        setStorageError(messageFromError(error, 'Unable to save wardrobe changes in this browser.'))
+        throw error
+      }
+    },
+    [],
+  )
 
-  const updateItem = useCallback((id: string, patch: Partial<ClothingItem>) => {
-    const current = itemsRef.current
-    if (!current.some((item) => item.id === id)) return
-    commitItems(current.map((item) => (item.id === id ? { ...item, ...patch, id } : item)))
-  }, [commitItems])
+  const updateItem = useCallback(async (id: string, patch: Partial<ClothingItem>) => {
+    try {
+      const updated = await updateWardrobeItem(id, (current) => ({
+        ...current,
+        ...patch,
+        id: current.id,
+        provenance: current.provenance,
+      }))
+      itemsRef.current = upsertItem(itemsRef.current, updated)
+      setItems(itemsRef.current)
+      setProvenanceAmbiguities(itemsRef.current.filter((item) => item.provenance === 'unknown'))
+      setStorageError(null)
+      return updated
+    } catch (error: unknown) {
+      setStorageError(messageFromError(error, 'Unable to save wardrobe changes in this browser.'))
+      throw error
+    }
+  }, [])
 
-  const deleteItem = useCallback((id: string) => {
-    const current = itemsRef.current
-    const next = current.filter((item) => item.id !== id)
-    if (next.length !== current.length) commitItems(next)
-  }, [commitItems])
+  const deleteItem = useCallback(async (id: string) => {
+    try {
+      await deleteWardrobeItem(id)
+      itemsRef.current = itemsRef.current.filter((item) => item.id !== id)
+      setItems(itemsRef.current)
+      setProvenanceAmbiguities(itemsRef.current.filter((item) => item.provenance === 'unknown'))
+      setStorageError(null)
+    } catch (error: unknown) {
+      setStorageError(messageFromError(error, 'Unable to delete this clothing item from this browser.'))
+      throw error
+    }
+  }, [])
 
-  const toggleFavorite = useCallback((id: string) => {
-    const current = itemsRef.current
-    if (!current.some((item) => item.id === id)) return
-    commitItems(
-      current.map((item) => (item.id === id ? { ...item, favorite: !item.favorite } : item)),
-    )
-  }, [commitItems])
+  const toggleFavorite = useCallback(async (id: string) => {
+    try {
+      const updated = await updateWardrobeItem(id, (current) => ({
+        ...current,
+        favorite: !current.favorite,
+      }))
+      itemsRef.current = upsertItem(itemsRef.current, updated)
+      setItems(itemsRef.current)
+      setStorageError(null)
+      return updated
+    } catch (error: unknown) {
+      setStorageError(messageFromError(error, 'Unable to update this favorite in this browser.'))
+      throw error
+    }
+  }, [])
 
-  const retryStorage = useCallback(() => {
-    enqueuePersistence(itemsRef.current)
-  }, [enqueuePersistence])
+  const retryStorage = useCallback(async () => {
+    try {
+      const storedItems = await getWardrobeItems()
+      itemsRef.current = storedItems
+      setItems(storedItems)
+      setProvenanceAmbiguities(storedItems.filter((item) => item.provenance === 'unknown'))
+      setStorageError(null)
+    } catch (error: unknown) {
+      setStorageError(messageFromError(error, 'Unable to reload your wardrobe from this browser.'))
+    }
+  }, [])
 
   const value = useMemo(
-    () => ({ items, addItem, updateItem, deleteItem, toggleFavorite, storageError, retryStorage }),
-    [items, addItem, updateItem, deleteItem, toggleFavorite, storageError, retryStorage],
+    () => ({
+      items,
+      provenanceAmbiguities,
+      addItem,
+      updateItem,
+      deleteItem,
+      toggleFavorite,
+      storageError,
+      retryStorage,
+    }),
+    [
+      items,
+      provenanceAmbiguities,
+      addItem,
+      updateItem,
+      deleteItem,
+      toggleFavorite,
+      storageError,
+      retryStorage,
+    ],
   )
 
   if (isLoading) {
@@ -181,8 +260,19 @@ export function WardrobeProvider({ children }: { children: ReactNode }) {
             onClick={retryStorage}
             className="rounded-full border border-current px-3 py-1 font-semibold"
           >
-            Retry saving
+            Reload saved data
           </button>
+        </div>
+      )}
+      {provenanceAmbiguities.length > 0 && (
+        <div
+          role="status"
+          className="bg-amber-50 px-4 py-2 text-center text-sm text-amber-950"
+        >
+          {provenanceAmbiguities.length} older wardrobe item
+          {provenanceAmbiguities.length === 1 ? ' could not' : 's could not'} be reliably classified
+          as starter or user-created. They remain saved locally and require review before any future
+          backup.
         </div>
       )}
       {children}

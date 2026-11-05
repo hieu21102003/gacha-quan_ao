@@ -10,7 +10,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getOutfits, persistOutfits } from '@/lib/image-storage'
+import {
+  addOutfitRecord,
+  deleteOutfit as deletePersistedOutfit,
+  getOutfits,
+  subscribeToStorageChanges,
+  updateOutfitRecord,
+} from '@/lib/image-storage'
 import type { Outfit } from '@/lib/wardrobe-data'
 
 type NewOutfit = Omit<Outfit, 'id' | 'createdAt' | 'updatedAt'>
@@ -19,11 +25,11 @@ type OutfitUpdate = Partial<Pick<Outfit, 'name' | 'description' | 'itemIds' | 'f
 interface OutfitContextValue {
   outfits: Outfit[]
   persistenceError: string | null
-  addOutfit: (outfit: NewOutfit) => Outfit
-  updateOutfit: (id: string, patch: OutfitUpdate) => void
-  deleteOutfit: (id: string) => void
-  toggleOutfitFavorite: (id: string) => void
-  retryStorage: () => void
+  addOutfit: (outfit: NewOutfit) => Promise<Outfit>
+  updateOutfit: (id: string, patch: OutfitUpdate) => Promise<Outfit>
+  deleteOutfit: (id: string) => Promise<void>
+  toggleOutfitFavorite: (id: string) => Promise<Outfit>
+  retryStorage: () => Promise<void>
 }
 
 const OutfitContext = createContext<OutfitContextValue | null>(null)
@@ -32,10 +38,19 @@ function createId() {
   return `outfit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function upsertOutfit(current: Outfit[], outfit: Outfit) {
+  const index = current.findIndex((candidate) => candidate.id === outfit.id)
+  if (index < 0) return [...current, outfit]
+  return current.map((candidate) => (candidate.id === outfit.id ? outfit : candidate))
+}
+
+function messageFromError(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback
+}
+
 export function OutfitProvider({ children }: { children: ReactNode }) {
   const [outfits, setOutfits] = useState<Outfit[]>([])
   const outfitsRef = useRef(outfits)
-  const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -66,28 +81,22 @@ export function OutfitProvider({ children }: { children: ReactNode }) {
     }
   }, [loadAttempt])
 
-  const enqueuePersistence = useCallback((snapshot: Outfit[]) => {
-    persistenceQueueRef.current = persistenceQueueRef.current
-      .catch(() => undefined)
-      .then(() => persistOutfits(snapshot))
-      .then(() => setPersistenceError(null))
-      .catch((error: unknown) => {
-        setPersistenceError(
-          error instanceof Error ? error.message : 'Unable to save outfit changes in this browser.',
-        )
-      })
+  const refreshFromStorage = useCallback(async () => {
+    try {
+      const storedOutfits = await getOutfits()
+      outfitsRef.current = storedOutfits
+      setOutfits(storedOutfits)
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to refresh outfits from this browser.'))
+    }
   }, [])
 
-  const commitOutfits = useCallback(
-    (nextOutfits: Outfit[]) => {
-      outfitsRef.current = nextOutfits
-      setOutfits(nextOutfits)
-      enqueuePersistence(nextOutfits)
-    },
-    [enqueuePersistence],
+  useEffect(
+    () => subscribeToStorageChanges('outfits', () => void refreshFromStorage()),
+    [refreshFromStorage],
   )
 
-  const addOutfit = useCallback((outfit: NewOutfit) => {
+  const addOutfit = useCallback(async (outfit: NewOutfit) => {
     const timestamp = new Date().toISOString()
     const next: Outfit = {
       ...outfit,
@@ -96,43 +105,75 @@ export function OutfitProvider({ children }: { children: ReactNode }) {
       createdAt: timestamp,
       updatedAt: timestamp,
     }
-    commitOutfits([...outfitsRef.current, next])
-    return next
-  }, [commitOutfits])
+    try {
+      const saved = await addOutfitRecord(next)
+      outfitsRef.current = upsertOutfit(outfitsRef.current, saved)
+      setOutfits(outfitsRef.current)
+      setPersistenceError(null)
+      return saved
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to save outfit changes in this browser.'))
+      throw error
+    }
+  }, [])
 
-  const updateOutfit = useCallback((id: string, patch: OutfitUpdate) => {
-    const current = outfitsRef.current
-    if (!current.some((outfit) => outfit.id === id)) return
-    const updatedAt = new Date().toISOString()
-    commitOutfits(
-      current.map((outfit) =>
-        outfit.id === id
-          ? { ...outfit, ...patch, itemIds: patch.itemIds ? [...patch.itemIds] : outfit.itemIds, updatedAt }
-          : outfit,
-      ),
-    )
-  }, [commitOutfits])
+  const updateOutfit = useCallback(async (id: string, patch: OutfitUpdate) => {
+    try {
+      const updated = await updateOutfitRecord(id, (current) => ({
+        ...current,
+        ...patch,
+        itemIds: patch.itemIds ? [...patch.itemIds] : current.itemIds,
+        updatedAt: new Date().toISOString(),
+      }))
+      outfitsRef.current = upsertOutfit(outfitsRef.current, updated)
+      setOutfits(outfitsRef.current)
+      setPersistenceError(null)
+      return updated
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to save outfit changes in this browser.'))
+      throw error
+    }
+  }, [])
 
-  const deleteOutfit = useCallback((id: string) => {
-    const current = outfitsRef.current
-    const next = current.filter((outfit) => outfit.id !== id)
-    if (next.length !== current.length) commitOutfits(next)
-  }, [commitOutfits])
+  const deleteOutfit = useCallback(async (id: string) => {
+    try {
+      await deletePersistedOutfit(id)
+      outfitsRef.current = outfitsRef.current.filter((outfit) => outfit.id !== id)
+      setOutfits(outfitsRef.current)
+      setPersistenceError(null)
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to delete this outfit from this browser.'))
+      throw error
+    }
+  }, [])
 
-  const toggleOutfitFavorite = useCallback((id: string) => {
-    const current = outfitsRef.current
-    if (!current.some((outfit) => outfit.id === id)) return
-    const updatedAt = new Date().toISOString()
-    commitOutfits(
-      current.map((outfit) =>
-        outfit.id === id ? { ...outfit, favorite: !outfit.favorite, updatedAt } : outfit,
-      ),
-    )
-  }, [commitOutfits])
+  const toggleOutfitFavorite = useCallback(async (id: string) => {
+    try {
+      const updated = await updateOutfitRecord(id, (current) => ({
+        ...current,
+        favorite: !current.favorite,
+        updatedAt: new Date().toISOString(),
+      }))
+      outfitsRef.current = upsertOutfit(outfitsRef.current, updated)
+      setOutfits(outfitsRef.current)
+      setPersistenceError(null)
+      return updated
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to update this favorite in this browser.'))
+      throw error
+    }
+  }, [])
 
-  const retryStorage = useCallback(() => {
-    enqueuePersistence(outfitsRef.current)
-  }, [enqueuePersistence])
+  const retryStorage = useCallback(async () => {
+    try {
+      const storedOutfits = await getOutfits()
+      outfitsRef.current = storedOutfits
+      setOutfits(storedOutfits)
+      setPersistenceError(null)
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to reload outfits from this browser.'))
+    }
+  }, [])
 
   const value = useMemo(
     () => ({
@@ -198,7 +239,7 @@ export function OutfitProvider({ children }: { children: ReactNode }) {
             onClick={retryStorage}
             className="rounded-full border border-current px-3 py-1 font-semibold"
           >
-            Retry saving
+            Reload saved data
           </button>
         </div>
       )}

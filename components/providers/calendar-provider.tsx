@@ -12,8 +12,11 @@ import {
 } from 'react'
 import { useOutfits } from '@/components/providers/outfit-provider'
 import {
+  addCalendarEntry,
   getCalendarEntries,
-  persistCalendarEntries,
+  subscribeToStorageChanges,
+  updateCalendarEntry,
+  deleteCalendarEntry,
 } from '@/lib/image-storage'
 import {
   findMissingOutfitReferences,
@@ -30,11 +33,11 @@ interface CalendarContextValue {
   entries: CalendarEntry[]
   missingOutfitReferences: MissingOutfitReference[]
   persistenceError: string | null
-  addEntry: (entry: NewCalendarEntry) => CalendarEntry
-  updateEntry: (id: string, patch: CalendarEntryUpdate) => void
-  deleteEntry: (id: string) => void
+  addEntry: (entry: NewCalendarEntry) => Promise<CalendarEntry>
+  updateEntry: (id: string, patch: CalendarEntryUpdate) => Promise<CalendarEntry>
+  deleteEntry: (id: string) => Promise<void>
   getEntriesByDate: (date: string) => CalendarEntry[]
-  retryStorage: () => void
+  retryStorage: () => Promise<void>
 }
 
 const CalendarContext = createContext<CalendarContextValue | null>(null)
@@ -48,11 +51,20 @@ function validateEntry(entry: Pick<CalendarEntry, 'outfitId' | 'date'>) {
   if (!isCalendarDate(entry.date)) throw new TypeError('A valid calendar date in YYYY-MM-DD format is required.')
 }
 
+function upsertEntry(current: CalendarEntry[], entry: CalendarEntry) {
+  const index = current.findIndex((candidate) => candidate.id === entry.id)
+  if (index < 0) return [...current, entry]
+  return current.map((candidate) => (candidate.id === entry.id ? entry : candidate))
+}
+
+function messageFromError(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback
+}
+
 export function CalendarProvider({ children }: { children: ReactNode }) {
   const { outfits } = useOutfits()
   const [entries, setEntries] = useState<CalendarEntry[]>([])
   const entriesRef = useRef(entries)
-  const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -83,29 +95,23 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     }
   }, [loadAttempt])
 
-  const enqueuePersistence = useCallback((snapshot: CalendarEntry[]) => {
-    persistenceQueueRef.current = persistenceQueueRef.current
-      .catch(() => undefined)
-      .then(() => persistCalendarEntries(snapshot))
-      .then(() => setPersistenceError(null))
-      .catch((error: unknown) => {
-        setPersistenceError(
-          error instanceof Error ? error.message : 'Unable to save calendar changes in this browser.',
-        )
-      })
+  const refreshFromStorage = useCallback(async () => {
+    try {
+      const storedEntries = await getCalendarEntries()
+      entriesRef.current = storedEntries
+      setEntries(storedEntries)
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to refresh your calendar from this browser.'))
+    }
   }, [])
 
-  const commitEntries = useCallback(
-    (nextEntries: CalendarEntry[]) => {
-      entriesRef.current = nextEntries
-      setEntries(nextEntries)
-      enqueuePersistence(nextEntries)
-    },
-    [enqueuePersistence],
+  useEffect(
+    () => subscribeToStorageChanges('calendar', () => void refreshFromStorage()),
+    [refreshFromStorage],
   )
 
   const addEntry = useCallback(
-    (entry: NewCalendarEntry) => {
+    async (entry: NewCalendarEntry) => {
       validateEntry(entry)
       const timestamp = new Date().toISOString()
       const next: CalendarEntry = {
@@ -116,42 +122,62 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         createdAt: timestamp,
         updatedAt: timestamp,
       }
-      commitEntries([...entriesRef.current, next])
-      return next
+      try {
+        const saved = await addCalendarEntry(next)
+        entriesRef.current = upsertEntry(entriesRef.current, saved)
+        setEntries(entriesRef.current)
+        setPersistenceError(null)
+        return saved
+      } catch (error: unknown) {
+        setPersistenceError(messageFromError(error, 'Unable to save calendar changes in this browser.'))
+        throw error
+      }
     },
-    [commitEntries],
+    [],
   )
 
   const updateEntry = useCallback(
-    (id: string, patch: CalendarEntryUpdate) => {
+    async (id: string, patch: CalendarEntryUpdate) => {
       if (!id) throw new TypeError('A calendar entry ID is required.')
-      const current = entriesRef.current
-      const existing = current.find((entry) => entry.id === id)
-      if (!existing) return
 
-      const updated: CalendarEntry = {
-        ...existing,
-        ...patch,
-        updatedAt: new Date(
-          Math.max(Date.now(), (Date.parse(existing.updatedAt) || 0) + 1),
-        ).toISOString(),
+      try {
+        const updated = await updateCalendarEntry(id, (existing) => ({
+          ...existing,
+          ...patch,
+          updatedAt: new Date(
+            Math.max(Date.now(), (Date.parse(existing.updatedAt) || 0) + 1),
+          ).toISOString(),
+        }))
+        validateEntry(updated)
+        if (typeof updated.note !== 'string') {
+          throw new TypeError('A calendar entry note must be a string.')
+        }
+        entriesRef.current = upsertEntry(entriesRef.current, updated)
+        setEntries(entriesRef.current)
+        setPersistenceError(null)
+        return updated
+      } catch (error: unknown) {
+        setPersistenceError(messageFromError(error, 'Unable to save calendar changes in this browser.'))
+        throw error
       }
-      validateEntry(updated)
-      if (typeof updated.note !== 'string') throw new TypeError('A calendar entry note must be a string.')
-
-      commitEntries(current.map((entry) => (entry.id === id ? updated : entry)))
     },
-    [commitEntries],
+    [],
   )
 
   const deleteEntry = useCallback(
-    (id: string) => {
+    async (id: string) => {
       if (!id) throw new TypeError('A calendar entry ID is required.')
-      const current = entriesRef.current
-      const next = current.filter((entry) => entry.id !== id)
-      if (next.length !== current.length) commitEntries(next)
+      try {
+        await deleteCalendarEntry(id)
+        entriesRef.current = entriesRef.current.filter((entry) => entry.id !== id)
+        setEntries(entriesRef.current)
+        setPersistenceError(null)
+      } catch (error: unknown) {
+        setPersistenceError(messageFromError(error, 'Unable to remove the calendar entry from this browser.'))
+        throw error
+      }
     },
-    [commitEntries],
+    [],
   )
 
   const getEntriesByDate = useCallback(
@@ -159,9 +185,16 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const retryStorage = useCallback(() => {
-    enqueuePersistence(entriesRef.current)
-  }, [enqueuePersistence])
+  const retryStorage = useCallback(async () => {
+    try {
+      const storedEntries = await getCalendarEntries()
+      entriesRef.current = storedEntries
+      setEntries(storedEntries)
+      setPersistenceError(null)
+    } catch (error: unknown) {
+      setPersistenceError(messageFromError(error, 'Unable to reload your calendar from this browser.'))
+    }
+  }, [])
 
   const missingOutfitReferences = useMemo(
     () => findMissingOutfitReferences(entries, outfits),
@@ -237,7 +270,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
             onClick={retryStorage}
             className="rounded-full border border-current px-3 py-1 font-semibold"
           >
-            Retry saving
+            Reload saved data
           </button>
         </div>
       )}
