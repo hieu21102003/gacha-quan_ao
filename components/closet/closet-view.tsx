@@ -17,10 +17,10 @@ import {
   useWardrobe,
   type ClosetFiltersState,
 } from '@/components/providers/wardrobe-provider'
-import type { ClosetTabCategory, ClothingItem } from '@/lib/wardrobe-data'
+import type { ClosetTabCategory, ClothingItem, WearStatus } from '@/lib/wardrobe-data'
 
 export function ClosetView() {
-  const { items, toggleFavorite, deleteItem } = useWardrobe()
+  const { items, toggleFavorite, updateItem, deleteItem } = useWardrobe()
   const [category, setCategory] = useState<ClosetTabCategory>('All Items')
   const [query, setQuery] = useState('')
   const [filters, setFilters] = useState<ClosetFiltersState>(emptyClosetFilters)
@@ -60,6 +60,10 @@ export function ClosetView() {
       setMutationError(error instanceof Error ? error.message : 'Unable to delete this item.')
       throw error
     }
+  }
+
+  const handleUpdateStatus = async (id: string, status: WearStatus) => {
+    await updateItem(id, { status })
   }
 
   const emptyVariant = !items.length
@@ -119,6 +123,7 @@ export function ClosetView() {
           if (!open) setSelected(null)
         }}
         onToggleFavorite={handleToggleFavorite}
+        onUpdateStatus={handleUpdateStatus}
         onEdit={(item) => {
           setSelected(null)
           setEditing(item)

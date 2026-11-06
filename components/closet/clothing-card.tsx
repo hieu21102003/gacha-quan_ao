@@ -53,7 +53,14 @@ export function ClothingCard({ item, onSelect, onToggleFavorite }: ClothingCardP
           />
         </button>
         {item.status !== 'Available' && (
-          <span className="absolute bottom-2.5 left-2.5 rounded-full bg-background/90 px-2 py-0.5 text-[10px] font-medium text-foreground backdrop-blur">
+          <span
+            className={cn(
+              'absolute bottom-2.5 left-2.5 rounded-full px-2 py-0.5 text-[10px] font-medium backdrop-blur',
+              item.status === 'In laundry'
+                ? 'bg-amber-100/95 text-amber-900'
+                : 'bg-background/90 text-foreground',
+            )}
+          >
             {item.status}
           </span>
         )}

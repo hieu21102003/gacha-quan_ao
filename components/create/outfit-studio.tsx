@@ -34,6 +34,7 @@ import {
   type ClothingItem,
   type Outfit,
 } from '@/lib/wardrobe-data'
+import { isValidManualOutfitComposition } from '@/lib/outfit-validation'
 import { cn } from '@/lib/utils'
 
 const slotDetails: Record<ClothingCategory, { description: string; icon: LucideIcon }> = {
@@ -78,17 +79,6 @@ function selectionsForOutfit(outfit: Outfit | undefined, items: ClothingItem[]) 
     if (item) selections[item.category].push(id)
   }
   return selections
-}
-
-function isValidComposition(selections: Record<ClothingCategory, string[]>) {
-  const hasDress = selections.Dresses.length === 1
-  const hasSeparates = selections.Tops.length === 1 && selections.Bottoms.length === 1
-  const hasConflictingBase = selections.Dresses.length > 0 && (selections.Tops.length > 0 || selections.Bottoms.length > 0)
-  const hasMultipleSingleSlots = slotOrder
-    .filter((category) => category !== 'Accessories')
-    .some((category) => selections[category].length > 1)
-
-  return (hasDress || hasSeparates) && !hasConflictingBase && !hasMultipleSingleSlots
 }
 
 export function OutfitStudio({ editId }: { editId?: string }) {
@@ -151,7 +141,8 @@ export function OutfitStudio({ editId }: { editId?: string }) {
   }, [itemById])
 
   const baseIsValid =
-    isValidComposition(selections) || Boolean(editingOutfit && missingItemIds.length > 0)
+    isValidManualOutfitComposition(selections) ||
+    Boolean(editingOutfit && missingItemIds.length > 0)
 
   const openSlot = (category: ClothingCategory) => {
     setSearch('')
@@ -197,7 +188,10 @@ export function OutfitStudio({ editId }: { editId?: string }) {
       return
     }
 
-    if (!isValidComposition(selections) && !(editingOutfit && missingItemIds.length > 0)) {
+    if (
+      !isValidManualOutfitComposition(selections) &&
+      !(editingOutfit && missingItemIds.length > 0)
+    ) {
       setFeedback({
         type: 'error',
         message: 'Choose a dress, or select both a top and bottoms to complete your look.',
